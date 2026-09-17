@@ -1,0 +1,15 @@
+{
+  "name": "google-oauth-lab",
+  "private": true,
+  "version": "1.0.0",
+  "description": "แล็บ Sign in with Google — Web Application Development",
+  "scripts": {
+    "install:all": "npm install && npm --prefix client install && npm --prefix server install",
+    "dev": "concurrently -n server,client -c yellow,cyan \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
+    "build": "npm --prefix client run build",
+    "check:secret": "npm --prefix client run build && node scripts/check-secret.js"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
