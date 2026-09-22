@@ -156,7 +156,7 @@ export function mountAuthRoutes(app) {
    */
   app.get('/api/me', requireSession, async (req, res) => {
     const user = await findUserById(req.userId);
-    if (!user) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
+    if (!user) return res.status(404).json({ error: 'ไม่พบข้อมูลผู้ใช้' });
     res.json({ name: user.name, email: user.email, picture: user.picture });
   });
 
