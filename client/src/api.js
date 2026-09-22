@@ -14,10 +14,14 @@ async function request(path, options = {}) {
 
 export const api = {
   me: () => request('/api/me'),
-  loginWithGoogle: (credential) =>
+
+  loginWithGoogle: (code) =>
     request('/api/auth/google', {
       method: 'POST',
-      body: JSON.stringify({ credential }),
+      body: JSON.stringify({ code }),
     }),
+
+  getCalendarEvents: () => request('/api/calendar/events'),
+  
   logout: () => request('/api/auth/logout', { method: 'POST' }),
 };

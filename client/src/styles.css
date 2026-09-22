@@ -18,12 +18,23 @@ body {
   border: 1px solid #e7e5e4;
   border-radius: 14px;
   padding: 2rem 2.25rem;
-  width: min(92vw, 26rem);
+  width: min(92vw, 720px);
   text-align: center;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
 h1 { font-size: 1.25rem; margin: 0 0 1.5rem; }
+
+.profile-header {
+  display: grid;
+  justify-items: center;
+  gap: 0.25rem;
+}
+
+.profile-header h2 {
+  margin: 0.75rem 0 0;
+  font-size: 1.05rem;
+}
 
 .avatar {
   width: 72px;
@@ -54,3 +65,47 @@ button {
 button:hover { background: #fafaf9; }
 
 .center { display: grid; place-items: center; }
+
+.calendar-section {
+  margin-top: 1.5rem;
+  text-align: left;
+}
+
+.calendar-section > h2 {
+  margin-bottom: 0;
+}
+
+.event-count {
+  margin-top: 0.25rem;
+  color: #78716c;
+}
+
+.event-list {
+  display: grid;
+  gap: 0.75rem;
+  max-height: 480px;
+  overflow-y: auto;
+  padding-right: 0.25rem;
+}
+
+.event-card {
+  padding: 1rem;
+  border: 1px solid #e7e5e4;
+  border-left: 5px solid #4285f4;
+  border-radius: 10px;
+  background: #fafaf9;
+}
+
+.event-card h3 {
+  margin: 0 0 0.5rem;
+}
+
+.event-card p {
+  margin: 0.25rem 0;
+}
+
+.event-card a {
+  display: inline-block;
+  margin-top: 0.5rem;
+  color: #2563eb;
+}

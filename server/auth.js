@@ -3,12 +3,47 @@ import { upsertUser, findUserById } from './db.js';
 import {
   createSession,
   getSession,
+  updateSessionTokens,
   destroySession,
   SESSION_COOKIE,
   cookieOptions,
 } from './sessions.js';
 
-const client = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const client = new OAuth2Client(
+  process.env.GOOGLE_CLIENT_ID,
+  process.env.GOOGLE_CLIENT_SECRET,
+  'postmessage'
+);
+
+function getCurrentMonthRange() {
+  const now = new Date();
+
+  const thaiDate = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Bangkok',
+    year: 'numeric',
+    month: '2-digit',
+  }).formatToParts(now);
+
+  const year = Number(
+    thaiDate.find((part) => part.type === 'year').value
+  );
+
+  const month = Number(
+    thaiDate.find((part) => part.type === 'month').value
+  );
+
+  const nextYear = month === 12 ? year + 1 : year;
+  const nextMonth = month === 12 ? 1 : month + 1;
+
+  const pad = (value) => String(value).padStart(2, '0');
+
+  return {
+    timeMin: `${year}-${pad(month)}-01T00:00:00+07:00`,
+    timeMax: `${nextYear}-${pad(nextMonth)}-01T00:00:00+07:00`,
+    year,
+    month,
+  };
+}
 
 /**
  * Middleware: อนุญาตเฉพาะ request ที่มี session ถูกต้อง
@@ -45,33 +80,69 @@ export function mountAuthRoutes(app) {
    *
    * เมื่อเกิดข้อผิดพลาด ให้ตอบ 401 พร้อมข้อความที่บอกว่าต้องทำอะไรต่อ
    */
-  
+
   app.post('/api/auth/google', async (req, res) => {
-    const { credential } = req.body;
-    if (!credential) {
-      return res.status(400).json({ error: 'ไม่พบ credential ใน request' });
+    const { code } = req.body;
+
+    if (!code) {
+      return res.status(400).json({
+        error: 'ไม่พบ authorization code',
+      });
     }
 
     try {
-      // เขียนโค้ดของ TODO 1 ตรงนี้
+      // แลก authorization code เป็น Google tokens
+      const { tokens } = await client.getToken(code);
+
+      if (!tokens.id_token) {
+        return res.status(401).json({
+          error: 'Google ไม่ได้ส่ง ID token กลับมา',
+        });
+      }
+
+      // ตรวจสอบ ID token ก่อนเชื่อข้อมูลผู้ใช้
       const ticket = await client.verifyIdToken({
-        idToken: credential,
+        idToken: tokens.id_token,
         audience: process.env.GOOGLE_CLIENT_ID,
       });
 
-      const { sub, email, email_verified, name, picture } = ticket.getPayload();
+      const payload = ticket.getPayload();
+      const {
+        sub,
+        email,
+        email_verified,
+        name,
+        picture,
+      } = payload;
 
       if (!email_verified) {
-        return res.status(401).json({ error: 'email ไม่ถูกต้อง' });
+        return res.status(401).json({
+          error: 'อีเมล Google ยังไม่ได้รับการยืนยัน',
+        });
       }
 
-      const user = await upsertUser({ googleId: sub, email, name, picture });
-      const sid = await createSession(user.id);
+      const user = await upsertUser({
+        googleId: sub,
+        email,
+        name,
+        picture,
+      });
+
+      const sid = await createSession(user.id, tokens);
+
       res.cookie(SESSION_COOKIE, sid, cookieOptions);
-      res.json({ name: user.name, email: user.email, picture: user.picture });
-    } catch (err) {
-      console.error('ตรวจสอบ token ไม่ผ่าน:', err.message);
-      res.status(401).json({ error: 'เข้าสู่ระบบไม่สำเร็จ กรุณาลองใหม่' });
+
+      res.json({
+        name: user.name,
+        email: user.email,
+        picture: user.picture,
+      });
+    } catch (error) {
+      console.error('Google OAuth error:', error.message);
+
+      res.status(401).json({
+        error: 'เข้าสู่ระบบหรือขอสิทธิ์ Calendar ไม่สำเร็จ',
+      });
     }
   });
 
@@ -84,24 +155,95 @@ export function mountAuthRoutes(app) {
    * ระวังอย่าคืนข้อมูลที่หน้าเว็บไม่ได้ใช้ออกไปโดยไม่จำเป็น
    */
   app.get('/api/me', requireSession, async (req, res) => {
-    // เขียนโค้ดของ TODO 2 ตรงนี้
     const user = await findUserById(req.userId);
     if (!user) return res.status(404).json({ error: 'ไม่พบผู้ใช้' });
     res.json({ name: user.name, email: user.email, picture: user.picture });
   });
 
-  /**
-   * ─────────────────────────────────────────────────────────────
-   * TODO 3 — ออกจากระบบ
-   * ─────────────────────────────────────────────────────────────
-   * การลบ state ใน React อย่างเดียวไม่ถือว่าออกจากระบบ
-   * เพราะ cookie ยังอยู่และยังใช้เรียก API ได้
-   *
-   *   3.1 ลบ session ที่ฝั่ง server ด้วย destroySession()
-   *   3.2 ลบ cookie ด้วย res.clearCookie(SESSION_COOKIE, cookieOptions)
-   */
+  app.get('/api/calendar/events', requireSession, async (req, res) => {
+    const sid = req.cookies[SESSION_COOKIE];
+    const session = await getSession(sid);
+
+    if (!session?.googleTokens) {
+      return res.status(401).json({
+        error: 'ไม่พบสิทธิ์ Google Calendar กรุณาเข้าสู่ระบบใหม่',
+      });
+    }
+
+    try {
+      const oauthClient = new OAuth2Client(
+        process.env.GOOGLE_CLIENT_ID,
+        process.env.GOOGLE_CLIENT_SECRET,
+        'postmessage'
+      );
+
+      oauthClient.setCredentials(session.googleTokens);
+
+      oauthClient.on('tokens', async (tokens) => {
+        await updateSessionTokens(sid, tokens);
+      });
+
+      const { timeMin, timeMax, year, month } = getCurrentMonthRange();
+
+      const events = [];
+      let pageToken;
+
+      do {
+        const params = new URLSearchParams({
+          timeMin,
+          timeMax,
+          singleEvents: 'true',
+          orderBy: 'startTime',
+          maxResults: '2500',
+          timeZone: 'Asia/Bangkok',
+        });
+
+        if (pageToken) {
+          params.set('pageToken', pageToken);
+        }
+
+        const response = await oauthClient.request({
+          url:
+            'https://www.googleapis.com/calendar/v3/' +
+            `calendars/primary/events?${params.toString()}`,
+        });
+
+        events.push(...(response.data.items || []));
+        pageToken = response.data.nextPageToken;
+      } while (pageToken);
+
+      const result = events.map((event) => ({
+        id: event.id,
+        summary: event.summary || '(ไม่มีชื่อกิจกรรม)',
+        description: event.description || '',
+        location: event.location || '',
+        start: event.start?.dateTime || event.start?.date,
+        end: event.end?.dateTime || event.end?.date,
+        htmlLink: event.htmlLink,
+        status: event.status,
+      }));
+
+      res.json({
+        year,
+        month,
+        count: result.length,
+        events: result,
+      });
+    } catch (error) {
+      console.error('Calendar API error:', error.response?.data || error.message);
+
+      const status = error.response?.status;
+
+      res.status(status === 403 ? 403 : 500).json({
+        error:
+          status === 403
+            ? 'ยังไม่ได้อนุญาตให้อ่าน Google Calendar'
+            : 'ดึงข้อมูล Google Calendar ไม่สำเร็จ',
+      });
+    }
+  });
+
   app.post('/api/auth/logout', async (req, res) => {
-    // เขียนโค้ดของ TODO 3 ตรงนี้
     await destroySession(req.cookies[SESSION_COOKIE]);
     res.clearCookie(SESSION_COOKIE, cookieOptions);
     res.status(200).json({ ok: true });
